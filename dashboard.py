@@ -5,7 +5,22 @@ import joblib
 import json
 import os
 import base64
-from datetime import timedelta
+import math
+from datetime import datetime, timedelta
+
+# --- ASTRAL ENGINE IMPORTS ---
+from astral import moon, sun, LocationInfo
+
+# ==========================================
+# 0. GLOBAL POLICY & ELASTICITY CONSTANTS
+# ==========================================
+OLD_SUBSIDY_FLOOR = 2.15
+KEMBUNG_RATE = 0.50
+SELAR_RATE = 0.80
+
+# ... rest of your code (load_resources, etc.)
+
+
 
 # ==========================================
 # 1. APP CONFIGURATION
@@ -17,6 +32,14 @@ st.set_page_config(
 )
 
 # ==========================================
+# 0. GLOBAL POLICY & ELASTICITY CONSTANTS
+# ==========================================
+# These must be defined here so every Tab can see them.
+OLD_SUBSIDY_FLOOR = 2.15
+KEMBUNG_RATE = 0.50
+SELAR_RATE = 0.80
+
+# ==========================================
 # 2. MODEL LOADER (STRUCTURAL + METRICS)
 # ==========================================
 @st.cache_resource
@@ -25,9 +48,6 @@ def load_resources():
     Loads the Champion EBMs and their Forensic Audit Scores.
     Uses caching to prevent reloading large files on every slider move.
     """
-    # Defaults (Fallbacks based on our known results)
-    k_stats = {'Accuracy': '96.76', 'MAPE': '3.2', 'Structural_MAE': '0.54'}
-    s_stats = {'Accuracy': '97.11', 'MAPE': '2.9', 'Structural_MAE': '0.53'}
     
     try:
         # Load Structural Brains
@@ -107,15 +127,8 @@ with tab1:
                 f"{k_stats.get('Structural_MAE', '0.54')} RM", 
                 delta=f"{k_stats.get('Accuracy', '96.76')}% Accuracy"
             )
+
         with c2: 
-            st.metric(
-                "Operational Horizon", 
-                "8 Weeks", 
-                delta="-0.03 RM Accuracy Cost", 
-                delta_color="off",
-                help="Time period before forecast accuracy degrades significantly."
-            )
-        with c3: 
             st.metric(
                 "Primary Driver", 
                 "Domestic Fuel", 
@@ -125,7 +138,7 @@ with tab1:
         st.divider()
         st.success("""
         **🏆 Policy Verdict:** Valid for **Monthly Review**. 
-        Kembung retains **>96% accuracy** even at Week 8, demonstrating strong structural inertia. 
+        Kembung retains **>96% accuracy**, demonstrating strong structural inertia. 
         Prices are driven primarily by domestic fuel costs and local tidal cycles.
         """)
         
@@ -159,137 +172,154 @@ with tab1:
         Prices are highly sensitive to the **Synergy of Diesel Price and Currency Strength**.
         """)
 
-# --- TAB 2: SIMULATOR (FORENSIC UTILITY VERSION) ---
+# --- TAB 2: SIMULATOR (HYBRID MODE) ---
+
 with tab2:
-    st.header("Price Shock Simulator (Structural Mode)")
-    st.caption("Powered by Grand Tournament Champions. Lever configuration reflects specific species drivers.")
+    st.header("🎮 Price Shock Simulator (Hybrid Mode)")
+    st.caption("Powered by Grand Tournament Champions. Lever configuration reflects specific species drivers and policy pass-through rates.")
     
-    # Define Column Layout
+    # Define Column Layout for Inputs and Model Config
     c1, c2 = st.columns([1.2, 1])
     
     if "Kembung" in species_choice:
         # ==========================================
-        # KEMBUNG: Benchmark Beater Config (6 Features)
+        # KEMBUNG SIMULATOR: Nature Simulator Logic
+        # Features: ['RON97', 'height_mean_m_perak', 'myr_per_usd_mean']
         # ==========================================
+        
         with c1:
-            st.subheader("🏛️ Policy War Room")
-            st.info("Forensic Insight: Kembung uses the Benchmark Beater Config (6 Features).")
+            st.subheader("Hypothetical Scenarios To Forecast next Week's Retail")
+            st.info("Forensic Insight: Kembung price is driven by the interaction of Fuel costs and Tidal physics.")
             
-            k_ron97 = st.slider("⛽ RON97 Price", 2.0, 5.0, 3.47, help="Primary Inflation Driver")
-            k_ron95 = st.slider("🚗 RON95 Price", 1.5, 3.5, 2.05, help="Subsidy Baseline")
-            k_diesel = st.slider("🚛 Diesel Price", 1.5, 4.5, 2.15, help="Logistics Base")
+            k_ron97 = st.slider("⛽ RON97 Price (RM/L)", 2.00, 5.00, 3.47, step=0.01)
+            k_diesel = st.slider("🚛 Diesel Price (RM/L)", 2.15, 4.50, 3.35, step=0.01, help="Adjusting this triggers the Structural Injection logic.")
+            k_usd = st.slider("🇺🇸 MYR/USD Rate", 3.50, 5.50, 4.45, step=0.01)
+            k_tide = st.slider("🌊 Tide Height Perak (m)", 0.50, 3.00, 1.67, step=0.01)
             
         with c2:
-            st.subheader("🌊 Nature Context")
-            k_tide_sb = st.slider("Tide Height (Sabah)", 0.5, 3.0, 1.5)
-            k_tide_pk = st.slider("Tide Height (Perak)", 0.5, 3.0, 1.6)
-            k_sun_pk = st.slider("Sunset Time (Perak)", 1100, 1200, 1150, help="Fishing Window (Minutes from midnight)")
+            st.subheader("🎯 Model Configuration")
+            st.write("**Architecture:** Standard Hybrid (EBM + Injection)")
+            st.write("**Elasticity (Pass-through):** 50%")
+            st.write("**Active Features:**")
+            st.markdown("- `RON97 Price`\n- `Tide Height (Perak)`\n- `USD Exchange Rate` \n- `Diesel Shock (Structural)`")
             
         if st.button("Run Kembung Simulation", type="primary"):
-            # INPUT: Matches 'kembung_structural_model.pkl' (No Lags)
+            # 1. AI BASE PREDICTION
             input_df = pd.DataFrame({
                 'RON97': [k_ron97], 
-                'RON95': [k_ron95], 
-                'diesel': [k_diesel], 
-                'height_mean_m_sabah': [k_tide_sb], 
-                'height_mean_m_perak': [k_tide_pk], 
-                'sunset_mean_time_perak': [k_sun_pk]
+                'height_mean_m_perak': [k_tide], 
+                'myr_per_usd_mean': [k_usd]
             })
-            pred = k_struct.predict(input_df)[0]
+            base_price = k_struct.predict(input_df)[0]
             
-            # Result Card
+            # 2. STRUCTURAL INJECTION (Diesel Shock)
+            shock = (k_diesel - 2.15) * KEMBUNG_RATE if k_diesel > 2.15 else 0.0
+            final_price = base_price + shock
+            
+            # 3. RESULT DISPLAY
             st.divider()
-            col_res, col_alert = st.columns([1, 2])
-            with col_res:
-                st.metric("Forecasted Price", f"RM {pred:.2f}")
-            with col_alert:
-                if pred > 16.00:
-                    st.error("⚠️ CRITICAL INFLATION RISK")
-                elif pred < 11.00:
-                    st.success("✅ STABLE MARKET CONDITIONS")
-                else:
-                    st.warning("⚖️ STANDARD VOLATILITY")
+            res_col1, res_col2 = st.columns(2)
+            with res_col1:
+                st.metric("Forecasted Price", f"RM {final_price:.2f}", delta=f"+-RM 0.5", delta_color="off")
+            with res_col2:
+                st.metric("Policy Impact", f"+RM {shock:.2f}", delta="Diesel Pass-through", delta_color="inverse")
 
     else:
         # ==========================================
-        # SELAR: Surgical Config (7 Features + Interaction Logic)
+        # SELAR SIMULATOR: Bio-Econ Synergy Logic
+        # Features: ['econ_pressure_index', 'solunar_synergy_perak']
         # ==========================================
         with c1:
-            st.subheader("🏛️ Policy War Room")
-            st.info("Forensic Insight: Selar uses Surgical Interaction Features (7 Inputs).")
+            st.subheader("Hypothetical Scenarios To Forecast next week's Retail")
+            st.info("Forensic Insight: Selar price depends on the Synergy of logistics costs and biological availability.")
             
-            s_usd = st.slider("🇺🇸 MYR/USD Rate", 3.5, 5.5, 4.6, help="Critical Driver: Import Power")
-            s_ron97 = st.slider("⛽ RON97 Price", 2.0, 5.0, 3.47)
-            s_ron95 = st.slider("🚗 RON95 Price", 1.5, 3.5, 2.05)
-            s_diesel = st.slider("🚛 Diesel Price", 1.5, 4.5, 2.15)
+            s_diesel = st.slider("🚛 Diesel Price (RM/L)", 2.15, 4.50, 3.35, step=0.01)
+            s_usd = st.slider("🇺🇸 MYR/USD Rate", 3.50, 5.50, 4.45, step=0.01)
+            s_tide = st.slider("🌊 Tide Height Perak (m)", 0.50, 3.00, 1.67, step=0.01)
+            s_sun = st.slider("🌇 Sunset Time (Mins from Midnight)", 1100, 1200, 1140, help="19:00 = 1140 mins")
             
         with c2:
-            st.subheader("🌊 Nature Context")
-            s_tide_pk = st.slider("Tide Height (Perak)", 0.5, 3.0, 1.6, help="Primary Environmental Constraint")
-            # Fixed Sunset for Simulation consistency (Standard Fishing Window)
-            s_sunset_pk = 1140 
+            st.subheader("🎯 Model Configuration")
+            st.write("**Architecture:** Surgical Bio-Econ Synergy")
+            st.write("**Elasticity (Pass-through):** 80%")
+            st.write("**Calculated Inputs:**")
+            st.markdown("- `Econ Pressure` (Diesel × USD)\n- `Solunar Synergy` (Tide × Sun)\n- `Diesel Shock` (Structural)")
             
         if st.button("Run Selar Simulation", type="primary"):
-            # SURGICAL CALCULATION (In-Memory Engineering)
-            # This is where the magic happens: Diesel * USD
-            econ_press = s_diesel * s_usd
-            # Tide * Sunset
-            solunar_syn = s_tide_pk * s_sunset_pk
+            # 1. FEATURE ENGINEERING (Recalculate Surgical Inputs)
+            econ_pressure = s_diesel * s_usd
+            solunar_synergy = s_tide * s_sun
             
-            # INPUT: Matches 'selar_structural_model.pkl' (7 Features)
             input_df = pd.DataFrame({
-                'RON97': [s_ron97], 
-                'myr_per_usd_mean': [s_usd], 
-                'RON95': [s_ron95], 
-                'diesel': [s_diesel], 
-                'econ_pressure_index': [econ_press],
-                'height_mean_m_perak': [s_tide_pk],
-                'solunar_synergy_perak': [solunar_syn]
+                'econ_pressure_index': [econ_pressure], 
+                'solunar_synergy_perak': [solunar_synergy]
             })
-            pred = s_struct.predict(input_df)[0]
             
-            # Result Card
+            # 2. AI BASE PREDICTION
+            base_price = s_struct.predict(input_df)[0]
+            
+            # 3. STRUCTURAL INJECTION
+            shock = (s_diesel - 2.15) * SELAR_RATE if s_diesel > 2.15 else 0.0
+            final_price = base_price + shock
+            
+            # 4. RESULT DISPLAY
             st.divider()
-            col_res, col_alert = st.columns([1, 2])
-            with col_res:
-                st.metric("Forecasted Price", f"RM {pred:.2f}")
-            with col_alert:
-                if pred > 17.50:
-                    st.error("⚠️ IMPORT COST SPIKE")
-                else:
-                    st.success("✅ LOGISTICS STABLE")
+            res_col1, res_col2 = st.columns(2)
+            with res_col1:
+                st.metric("Forecasted Price", f"RM {final_price:.2f}",  delta=f"+-RM 0.7", delta_color="off")
+            with res_col2:
+                st.metric("Policy Impact", f"+RM {shock:.2f}", delta="Diesel Pass-through", delta_color="inverse")
+
 # --- TAB 3: PERFORMANCE (FORENSIC SCORECARD) ---
 with tab3:
     st.header(f"🎯 {species_choice} Model Performance")
     
+    # 1. DYNAMIC METRIC LOADER
+    # We load the JSONs generated by 'run_horizon_test_blind_unified.py'
+    # These contain: "accuracy", "mape", "avg_deviation"
     is_kembung = "Kembung" in species_choice
-    if is_kembung:
-        current_stats = k_stats
-        species_name = "Kembung"
-        # Define filenames for Kembung Horizon Tests
-        file_struct = "kembung_structural_horizon.png"
-        file_blind = "kembung_total_blind_horizon.png"
-    else:
-        current_stats = s_stats
-        species_name = "Selar"
-        # Define filenames for Selar Horizon Tests
-        file_struct = "selar_structural_horizon.png"
-        file_blind = "selar_total_blind_horizon.png"
+    
+    try:
+        if is_kembung:
+            species_name = "Kembung"
+            json_file = "kembung_metrics.json"
+            # Define filenames for Kembung Horizon Tests
+            # Note: Ensure these images are in 'thesis_analytics_images/' folder
+            file_struct = "thesis_analytics_images/kembung_structural_horizon.png"
+            file_blind = "thesis_analytics_images/kembung_total_blind_horizon.png"
+        else:
+            species_name = "Selar"
+            json_file = "selar_metrics.json"
+            file_struct = "thesis_analytics_images/selar_structural_horizon.png"
+            file_blind = "thesis_analytics_images/selar_total_blind_horizon.png"
 
-    # 1. KEY PERFORMANCE INDICATORS
+        # Load the JSON
+        with open(json_file, 'r') as f:
+            perf_data = json.load(f)
+            
+        # Extract Global Metrics (Defaults to N/A if missing)
+        accuracy_val = perf_data.get("Accuracy", "N/A")
+        mape_val = perf_data.get("mape", "N/A")
+        mae_val = perf_data.get("avg_deviation", "N/A")
+        
+    except FileNotFoundError:
+        st.error(f"⚠️ Performance Data Missing. Please run 'run_horizon_test_blind_unified.py' to generate {json_file}.")
+        st.stop()
+
+    # 2. KEY PERFORMANCE INDICATORS (Dynamic)
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Overall Accuracy", f"{current_stats.get('Accuracy', 'N/A')}%", help="100% - MAPE")
+        st.metric("Overall Accuracy", f"{accuracy_val}%", help="100% - MAPE (From Dynamic Blind Test)")
     with c2:
-        st.metric("Forensic Error (MAPE)", f"{current_stats.get('MAPE', 'N/A')}%", help="Mean Absolute Percentage Error", delta_color="inverse")
+        st.metric("Forensic Error (MAPE)", f"{mape_val}%", help="Mean Absolute Percentage Error", delta_color="inverse")
     with c3:
-        st.metric("Avg Price Deviation", f"RM {current_stats.get('Structural_MAE', 'N/A')}", help="Mean Absolute Error")
+        st.metric("Avg Price Deviation", f"RM {mae_val}", help="Mean Absolute Error over 8 Weeks")
 
     st.divider()
 
-    # 2. COMPARATIVE HORIZON TEST
+    # 3. COMPARATIVE HORIZON TEST
     st.subheader("⏳ The Resilience Stress Test (8-Week Horizon)")
-    st.caption("Validating the 'Expiration Date' of the forecast. Left: Model Stability. Right: Real-World Volatility.")
+    st.caption("Validating the 'Expiration Date' of the forecast. Left: Model Stability (Inputs Known). Right: Real-World Volatility (Dynamic Forecast).")
 
     def get_base64_image(path):
         if os.path.exists(path):
@@ -297,317 +327,306 @@ with tab3:
                 return base64.b64encode(f.read()).decode()
         return None
 
-    # Load Images (From Root Directory)
+    # Load Images
     b64_struct = get_base64_image(file_struct)
     b64_blind = get_base64_image(file_blind)
 
     h_col1, h_col2 = st.columns(2)
     
     with h_col1:
-        st.markdown("**Test A: Scenario Consistency (Inputs Known)**")
+        st.markdown("**Test A:Prediciting one week at a time using currently known market conditions**")
         if b64_struct:
             st.markdown(f'<img src="data:image/png;base64,{b64_struct}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
-            st.info("✅ **Proof of Physics:** The flat/stable line proves the model is structurally sound. As long as inputs are known, accuracy does not degrade over time.")
+            st.info("✅ **Structural Consistency (Inputs Known):** The line proves the model is structurally sound. As long as inputs are known, accuracy does not degrade over time.")
         else:
-            st.warning(f"File not found: {file_struct}")
+            st.warning(f"File not found: {file_struct}") 
 
     with h_col2:
-        st.markdown("**Test B: Total Blackout (Inputs Frozen)**")
+        st.markdown("**Test B: Prediciting to any selected week using projected market conditions**") 
         if b64_blind:
             st.markdown(f'<img src="data:image/png;base64,{b64_blind}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
+            
+            # Dynamic Insight based on Species
             if is_kembung:
-                st.warning("⚠️ **Forensic Insight:** Kembung error spikes immediately. This proves high sensitivity to daily Tides (Nature Penalty).")
+                st.info(" **Dynamic Blind Test (Inputs Forecasted):** This line shows the further out the target forecast week the higher the margin of error when inputs are unknown but still reliable within 4 week periods with +- RM 0.55 RM.")
             else:
-                st.success("🛡️ **Forensic Insight:** Selar error remains relatively stable. This proves high resilience to short-term fluctuations.")
+                st.info(" **Dynamic Blind Test (Inputs Forecasted):** This line shows the further out the target forecast week the higher the margin of error when inputs are unknown but still reliable within 4 week periods with +- RM 0.8 RM.")
         else:
             st.warning(f"File not found: {file_blind}")
             
     st.divider()
     
-    # 3. THE 30-DAY VERDICT
+    # 4. THE 30-DAY VERDICT
     st.subheader("🏛️ Policy Implication: The 30-Day Rule")
     st.write(f"""
     Based on the divergence between Test A and Test B, we establish a **30-Day Validity Window** for {species_name}. 
-    While the model is physically perfect (Test A), the volatility of the real world (Test B) introduces acceptable degradation (+0.05 RM) over 4 weeks.
+    While the model is physically perfect (Test A), the volatility of the real world (Test B) introduces some degradation over 4 weeks.
     """)
     
     rec_col1, rec_col2 = st.columns([1, 3])
     with rec_col1:
-        st.metric("Rec. Review Cycle", "Monthly", "Every 30 Days")
+        st.metric("Data Update Cycle", "Weekly", "market conditions updated every week.")
     with rec_col2:
-        st.info("**Operational Protocol:** Policymakers can rely on this forecast for **4 weeks**. After Day 30, the accumulation of 'Nature Drift' (Tides/Weather) requires a data refresh to maintain >95% accuracy.")
+        st.info("**Operational Protocol:** Policymakers can forecast week by week up to **4 weeks** from the current week. Forecasts beyond this window have a higher margin of error as shown in the charts")
 
 # --- TAB 4: EVIDENCE SUITE ---
 with tab4:
-    st.header(f"🧠 {species_choice} Forensic Evidence")
-    st.write("Deep-dive analytics: Deconstructing the 'Black Box' of seafood pricing.")
+    st.header(f"🧠 {species_choice} Forensic Evidence Suite")
+    st.write("Quantitative deconstruction of the 'Black Box' architecture through structural decomposition, marginal impact analysis, and error distribution audits.")
 
+    # Path Configuration
     f_dir = "thesis_analytics_images"
     d_dir = "Thesis_Final_Champion_Suite"
     
+    # Species-specific settings
     is_kembung = "Kembung" in species_choice
     prefix = "kembung" if is_kembung else "selar"
     
-    # 1. Decomposition
-    st.subheader("📉 Part 1: Time Series Anatomy")
-    st.caption("Forensic decomposition of the price into Trend (Inflation) and Observed Reality.")
+    # ---------------------------------------------------------
+    # 1. STRUCTURAL ANATOMY (Trend & Linear Correlation)
+    # ---------------------------------------------------------
+    st.subheader("📉 Part 1: Structural Anatomy")
+    st.caption("Deconstructing the price into long-term Inflation Trends and surgical statistical correlations (T+1).")
     
-    decomp_file = f"{prefix}_decomposition.png"
-    b64_dec = get_base64_image(os.path.join(f_dir, decomp_file))
+    col_a, col_b = st.columns(2)
     
-    if b64_dec:
-        st.markdown(f'<img src="data:image/png;base64,{b64_dec}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
-    else:
-        st.warning("Decomposition chart not found.")
-        
+    with col_a:
+        st.markdown("**Price Decomposition (Trend vs. Observed)**")
+        decomp_file = f"{prefix}_decomposition.png"
+        b64_dec = get_base64_image(os.path.join(f_dir, decomp_file))
+        if b64_dec:
+            st.markdown(f'<img src="data:image/png;base64,{b64_dec}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
+        else:
+            st.warning("Decomposition chart not found.")
+
+    with col_b:
+        st.markdown("**Surgical Correlation Matrix (Predictive T+1)**")
+        corr_file = f"{prefix}_structural_correlation.png"
+        b64_corr = get_base64_image(os.path.join(f_dir, corr_file))
+        if b64_corr:
+            st.markdown(f'<img src="data:image/png;base64,{b64_corr}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
+        else:
+            st.warning("Correlation chart not found.")
+            
     st.divider()
 
-    # 2. Structural Feature Importance
-    st.subheader("📊 Part 2: Structural Price Drivers")
-    st.caption("The hierarchy of influence. Which variables physically move the price the most?")
+    # ---------------------------------------------------------
+    # 2. GLOBAL DRIVERS (Decomposed Forensic Audit)
+    # ---------------------------------------------------------
+    st.subheader("📊 Part 2: Global Feature Importance")
+    st.markdown(f"""
+    **Forensic Decomposition:** This chart ranks the weighted impact of variables on the logic of the {species_choice} engine. 
+    To prove structural validity, we have **decomposed** the engineered features. You can now compare the 
+    predictive strength of the **Synergy Indices** against their **Standalone Components** (e.g., Tide vs. Solunar Synergy).
+    """)
     
     imp_file = f"{prefix}_structural_importance.png"
     b64_imp = get_base64_image(os.path.join(f_dir, imp_file))
     
     if b64_imp:
-        st.markdown(f'<img src="data:image/png;base64,{b64_imp}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="display: flex; justify-content: center;">'
+            f'<img src="data:image/png;base64,{b64_imp}" style="width:85%; border: 1px solid #eee; border-radius: 8px; box-shadow: 0px 4px 15px rgba(0,0,0,0.1);">'
+            f'</div>', 
+            unsafe_allow_html=True
+        )
+        st.caption(f"**Forensic Proof:** Notice how the combined Synergy indices typically outrank the standalone Tide or Diesel variables.")
     else:
-        st.warning("Feature Importance chart not found.")
+        st.warning("Decomposed Importance chart not found.")
 
-    st.divider()
-
-    # 3. Structural Correlation Matrix
-    st.subheader("🔗 Part 3: Linear Correlation Matrix")
-    st.caption("Raw statistical relationships before AI processing.")
-    
-    corr_file = f"{prefix}_structural_correlation.png"
-    b64_c = get_base64_image(os.path.join(f_dir, corr_file))
-    
-    if b64_c: 
-        st.markdown(f'<img src="data:image/png;base64,{b64_c}" style="width:80%; display: block; margin: auto; border: 1px solid #eee;">', unsafe_allow_html=True)
-    else:
-        st.warning(f"Correlation chart not found.")
-
-    st.divider()
-    
-    # 4. PDPs
-    st.subheader("🔍 Part 4: Marginal Impact Analysis (PDPs)")
-    st.caption("The 'Physics Curves'. These graphs show exactly how the Model reacts to each slider.")
+    # ---------------------------------------------------------
+    # 3. MARGINAL IMPACT (Surgical PDPs)
+    # ---------------------------------------------------------
+    st.subheader("🔍 Part 3: Marginal Impact Analysis (PDPs)")
+    st.caption("The 'Physics Curves'. These graphs demonstrate the marginal effect of champion variables on the forecast while holding others constant.")
     
     if is_kembung:
-        pdp_files = [
-            "kembung_pdp_RON97.png", "kembung_pdp_RON95.png", "kembung_pdp_diesel.png",
-            "kembung_pdp_height_mean_m_perak.png", "kembung_pdp_height_mean_m_sabah.png", 
-            "kembung_pdp_sunset_mean_time_perak.png"
-        ]
+        pdp_files = ["kembung_pdp_RON97.png", "kembung_pdp_height_mean_m_perak.png", "kembung_pdp_myr_per_usd_mean.png"]
     else:
-        pdp_files = [
-            "selar_pdp_myr_per_usd_mean.png", "selar_pdp_RON97.png", "selar_pdp_RON95.png", 
-            "selar_pdp_diesel.png", "selar_pdp_height_mean_m_perak.png"
-        ]
+        pdp_files = ["selar_pdp_econ_pressure_index.png", "selar_pdp_solunar_synergy_perak.png"]
 
-    cols = st.columns(2)
+    pdp_cols = st.columns(len(pdp_files))
     for idx, fname in enumerate(pdp_files):
-        b64 = get_base64_image(os.path.join(f_dir, fname))
-        with cols[idx % 2]:
-            if b64:
-                st.markdown(f'<img src="data:image/png;base64,{b64}" style="width:100%; margin-bottom:15px; border: 1px solid #f0f0f0; border-radius: 5px;">', unsafe_allow_html=True)
-            else:
-                st.warning(f"Plot not found: {fname}")
+        b64_pdp = get_base64_image(os.path.join(f_dir, fname))
+        with pdp_cols[idx]:
+            if b64_pdp:
+                st.markdown(f'<img src="data:image/png;base64,{b64_pdp}" style="width:100%; border: 1px solid #f0f0f0; border-radius: 5px;">', unsafe_allow_html=True)
+                clean_label = fname.split('_pdp_')[-1].replace('.png', '').replace('_', ' ').title()
+                st.caption(f"Champion Input: {clean_label}")
 
     st.divider()
 
-    # 5. Market Dynamics
-    st.subheader("🚀 Part 5: Market Dynamics (Structural Forensics)")
-    st.caption("Replacing Hybrid 'Correction' logic with Standalone Structural Signal.")
+    # ---------------------------------------------------------
+    # 4. MARKET DYNAMICS (Boxplots & Residual Audit)
+    # ---------------------------------------------------------
+    st.subheader("🚀 Part 4: Market Dynamics & Residual Audit")
+    st.caption("Quantifying the physical market range, error distribution (centered at 0.00 RM), and structural risk profile.")
     
     d_col1, d_col2, d_col3 = st.columns(3)
     
-    b64_box = get_base64_image(os.path.join(d_dir, f"{prefix}_boxplot.png"))
     with d_col1:
         st.markdown("**Deliverable #7: Price Arena**")
-        if b64_box: 
+        b64_box = get_base64_image(os.path.join(d_dir, f"{prefix}_boxplot.png"))
+        if b64_box:
             st.markdown(f'<img src="data:image/png;base64,{b64_box}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
-
-    b64_res = get_base64_image(os.path.join(d_dir, f"{prefix}_residuals.png"))
+    
     with d_col2:
-        st.markdown("**Deliverable #8: Residual Accuracy**")
-        if b64_res: 
+        st.markdown("**Deliverable #8: Forecasting Residuals**")
+        b64_res = get_base64_image(os.path.join(d_dir, f"{prefix}_residuals.png"))
+        if b64_res:
             st.markdown(f'<img src="data:image/png;base64,{b64_res}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
 
-    b64_vol = get_base64_image(os.path.join(d_dir, f"{prefix}_volatility.png"))
     with d_col3:
-        st.markdown("**Deliverable #9: Structural Risk**")
-        if b64_vol: 
+        st.markdown("**Deliverable #9: Structural Volatility**")
+        b64_vol = get_base64_image(os.path.join(d_dir, f"{prefix}_volatility.png"))
+        if b64_vol:
             st.markdown(f'<img src="data:image/png;base64,{b64_vol}" style="width:100%; border: 1px solid #ddd; border-radius: 5px;">', unsafe_allow_html=True)
 
-# ==========================================
-# 5. TAB 5: FORECAST ENGINE (MULTI-HORIZON)
-# ==========================================
-# RE-IMPORTING DEPENDENCIES
-import math
+    st.divider()
+    st.info("**Thesis Defense Note:** This evidence suite validates that the model is centered at 0.00 RM error, ensuring structural transparency and zero-bias policy simulations.")
+
+import joblib
 from datetime import timedelta
-from astral import moon, sun, LocationInfo
+import numpy as np
 
+# --- TAB 5: FORENSIC MULTI-WEEK FORECAST (PRODUCTION) ---
 with tab5:
-    st.header("🔮 Structural Forecast Engine")
-    st.markdown("Generates future price scenarios by combining **Frozen Economic Inputs** (Current Buffer) with **Projected Physics** (Future Tides/Moon).")
+    st.header("🔮 Forensic Forecast (Pre-Trained Economic Engine)")
+    st.caption("Architecture: **Loaded ARIMA Models** (Frozen Logic) + **Weekly Physics**.")
 
-    # 1. CONTROLS
-    c_hor, c_spec = st.columns(2)
-    with c_hor:
-        horizon_opt = st.radio("Forecast Horizon:", ["1 Week", "2 Weeks", "3 Weeks", "4 Weeks"], horizontal=True, index=0)
-    with c_spec:
-        # Defaults to the global sidebar choice, but allows local toggling
-        default_idx = 0 if "Kembung" in species_choice else 1
-        view_species = st.radio("Species Focus:", ["Kembung", "Selar"], horizontal=True, index=default_idx)
-
-    # 2. CALCULATE TARGET DATE
-    weeks_map = {"1 Week": 1, "2 Weeks": 2, "3 Weeks": 3, "4 Weeks": 4}
-    weeks_offset = weeks_map[horizon_opt]
-    
+    # 1. LOAD DATA & MODELS
     try:
-        df_buffer = pd.read_csv("Seafood_Security_Buffer.csv")
+        import json
+        df_buffer = pd.read_csv("full_buffer.csv")
+        if df_buffer.empty: st.stop()
         latest_row = df_buffer.iloc[-1]
-        last_date = pd.to_datetime(latest_row['date'])
         
-        # Target Date = Last Scraped Date + (7 days * Weeks)
-        target_dt = last_date + timedelta(days=7 * weeks_offset)
-        target_date_str = target_dt.strftime('%Y-%m-%d')
-        target_week_str = f"Week +{weeks_offset} ({target_dt.strftime('%b %Y')})"
-        
-    except Exception as e:
-        st.error(f"❌ Data Buffer Error: {e}")
-        st.stop()
-
-    # 3. PROJECT PHYSICS (ASTRAL ENGINE)
-    try:
-        # A. MOON PHASE
-        phase_days = moon.phase(target_dt)
-        tide_force = math.cos(2 * math.pi * (phase_days / 29.53))
-        
-        # B. CALIBRATED REGIME
-        proj_tide_pk = 1.6731 + (tide_force * 0.0934)
-        proj_tide_sb = 1.1440 + (tide_force * 0.1324)
-        
-        # C. SUNSET TIME
-        perak_loc = LocationInfo("Lumut", "Malaysia", "Asia/Kuala_Lumpur", 4.2105, 100.63)
-        s = sun.sun(perak_loc.observer, date=target_dt)
-        sunset_dt = s['sunset'].replace(tzinfo=None) + timedelta(hours=8)
-        proj_sunset = sunset_dt.hour * 60 + sunset_dt.minute
-
-    except Exception as e:
-        st.error(f"⚠️ Physics Projection Error: {e}")
-        st.stop()
-
-    # 4. GENERATE PREDICTIONS
-    try:
-        # FROZEN ECONOMICS
-        curr_diesel = latest_row.get('diesel', 2.15)
-        curr_usd = latest_row.get('myr_per_usd_mean', 4.5)
-        curr_ron95 = latest_row.get('RON95', 2.05)
-        curr_ron97 = latest_row.get('RON97', 3.47)
-
-        # KEMBUNG (Benchmark Config)
-        k_input = pd.DataFrame({
-            'RON97': [curr_ron97],
-            'RON95': [curr_ron95],
-            'diesel': [curr_diesel],
-            'height_mean_m_sabah': [proj_tide_sb],
-            'height_mean_m_perak': [proj_tide_pk],
-            'sunset_mean_time_perak': [proj_sunset]
-        })
-        k_pred = k_struct.predict(k_input)[0]
-
-        # SELAR (Surgical Config)
-        s_econ_press = curr_diesel * curr_usd
-        s_solunar_syn = proj_tide_pk * 1140 
-        
-        s_input = pd.DataFrame({
-            'RON97': [curr_ron97],
-            'myr_per_usd_mean': [curr_usd],
-            'RON95': [curr_ron95],
-            'diesel': [curr_diesel],
-            'econ_pressure_index': [s_econ_press],
-            'height_mean_m_perak': [proj_tide_pk],
-            'solunar_synergy_perak': [s_solunar_syn]
-        })
-        s_pred = s_struct.predict(s_input)[0]
-
-    except Exception as e:
-        st.error(f"Model Prediction Error: {e}")
-        st.stop()
-
-    # 5. ERROR MARGIN LOGIC (Derived from Astral Horizon Test)
-    # These values come directly from the validation script output
-    k_margins = {1: 0.53, 2: 0.53, 3: 0.55, 4: 0.57}
-    s_margins = {1: 0.53, 2: 0.57, 3: 0.60, 4: 0.60}
-    
-    k_err = k_margins.get(weeks_offset, 0.60)
-    s_err = s_margins.get(weeks_offset, 0.65)
-
-    # 6. DISPLAY DASHBOARD
-    st.divider()
-    
-    # A. Headline Numbers
-    m1, m2 = st.columns(2)
-    with m1:
-        st.metric("Forecast Target", target_date_str, target_week_str)
-    
-    with m2:
-        if view_species == "Kembung":
-            st.metric(
-                "Kembung Price", 
-                f"RM {k_pred:.2f}", 
-                delta=f"± {k_err:.2f} RM (Margin)",
-                delta_color="off", # Gray color to indicate range/uncertainty
-                help="Margin of Error derived from Astral Horizon Stress Test"
-            )
+        if 'date' in latest_row:
+            latest_date = pd.to_datetime(latest_row['date'])
         else:
-            st.metric(
-                "Selar Price", 
-                f"RM {s_pred:.2f}", 
-                delta=f"± {s_err:.2f} RM (Margin)",
-                delta_color="off",
-                help="Margin of Error derived from Astral Horizon Stress Test"
-            )
+            latest_date = datetime.now()
+        
+        # LOAD THE PRE-TRAINED BRAINS
+        arima_ron = joblib.load("arima_ron97.pkl")
+        arima_diesel = joblib.load("arima_diesel.pkl")
+        arima_usd = joblib.load("arima_usd.pkl")
+
+        with open('kembung_validation_rmse.json', 'r') as f: k_val_json = json.load(f)
+        with open('selar_validation_rmse.json', 'r') as f: s_val_json = json.load(f)
+        with open('kembung_blind_rmse.json', 'r') as f: k_blind_json = json.load(f)
+        with open('selar_blind_rmse.json', 'r') as f: s_blind_json = json.load(f)
+    except Exception as e:
+        st.error(f"Initialization Error: {e}. Did you run 'train_econ_engine.py'?")
+        st.stop()
+
+    # 2. NATURE ENGINE (7-DAY INTEGRAL) - Keeps Physics Live
+    def get_weekly_astral_mean(start_date):
+        tides = []
+        sunsets = []
+        for d in range(7):
+            day_date = start_date + timedelta(days=d)
+            # Tide
+            p_days = moon.phase(day_date)
+            t_force = math.cos(4 * math.pi * (p_days / 29.53))
+            t_val = 1.6731 + (t_force * 0.15)
+            tides.append(t_val)
+            # Sunset
+            try:
+                lumut = LocationInfo("Lumut", "Malaysia", "Asia/Kuala_Lumpur", 4.2105, 100.63)
+                s_t = sun.sun(lumut.observer, date=day_date)
+                s_dt = s_t['sunset'].replace(tzinfo=None) + timedelta(hours=8)
+                s_val = s_dt.hour * 60 + s_dt.minute
+            except: s_val = 1140.0
+            sunsets.append(s_val)
+        return np.mean(tides), np.mean(sunsets)
+
+    # 3. GENERATE TRAJECTORIES (FAST LOAD)
+    with st.spinner("Loading Economic Vectors..."):
+        # DIRECTLY ASK THE MODEL FOR THE NEXT 3 STEPS
+        # No training time required. Instant response.
+        future_ron = arima_ron.forecast(steps=3).tolist()
+        future_diesel = arima_diesel.forecast(steps=3).tolist()
+        future_usd = arima_usd.forecast(steps=3).tolist()
+    
+    traj_ron = [latest_row['RON97']] + future_ron
+    traj_diesel = [latest_row['diesel']] + future_diesel
+    traj_usd = [latest_row['myr_per_usd_mean']] + future_usd
+    
+    trajectory_data = []
+    
+    for i, w in enumerate([1, 2, 3, 4]):
+        # A. Date Logic
+        offset = 7 * (w - 1)
+        t_date = latest_date + timedelta(days=offset)
+        
+        # B. Nature Logic
+        if w == 1:
+            t_tide = float(latest_row['height_mean_m_perak'])
+            t_sun = float(latest_row.get('sunset_mean_time_perak', 1140))
+            err_src = k_val_json
+        else:
+            t_tide, t_sun = get_weekly_astral_mean(t_date)
+            err_src = k_blind_json
+
+        # C. Economic Logic
+        in_ron = float(traj_ron[i])
+        in_diesel = float(traj_diesel[i])
+        in_usd = float(traj_usd[i])
+        
+        in_econ_p = in_diesel * in_usd
+        in_solunar = t_tide * t_sun
+
+        # D. Predictions
+        k_in = pd.DataFrame({'RON97': [in_ron], 'height_mean_m_perak': [t_tide], 'myr_per_usd_mean': [in_usd]})
+        k_base = k_struct.predict(k_in)[0]
+        k_shock = (in_diesel - 2.15) * KEMBUNG_RATE if in_diesel > 2.15 else 0.0
+        
+        s_in = pd.DataFrame({'econ_pressure_index': [in_econ_p], 'solunar_synergy_perak': [in_solunar]})
+        s_base = s_struct.predict(s_in)[0]
+        s_shock = (in_diesel - 2.15) * SELAR_RATE if in_diesel > 2.15 else 0.0
+        
+        trajectory_data.append({
+            "Week": f"Week {w}",
+            "Start Date": t_date.strftime('%d-%b'),
+            "Kembung Price": k_base + k_shock,
+            "Selar Price": s_base + s_shock,
+            "USD": in_usd,
+            "Diesel": in_diesel,
+            "RON97": in_ron,
+            "Avg Tide": t_tide
+        })
+
+    df_traj = pd.DataFrame(trajectory_data)
+
+    # 4. VISUALS
+    forecast_weeks = st.radio("Select Forecast Horizon:", [1, 2, 3, 4], horizontal=True, index=0)
+    sel_row = df_traj.iloc[forecast_weeks - 1]
+    
+    if forecast_weeks == 1:
+        k_err, s_err = 0.56, 0.70
+    else:
+        k_err, s_err = float(k_blind_json.get(str(forecast_weeks), 0)), float(s_blind_json.get(str(forecast_weeks), 0))
+
+    st.subheader(f"Projection for Week of {sel_row['Start Date']}")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Kembung Price", f"RM {sel_row['Kembung Price']:.2f}", delta=f"± RM {k_err:.2f}", delta_color="off")
+        st.caption(f"Weekly Avg Tide: {sel_row['Avg Tide']:.3f}m | RON97: {sel_row['RON97']:.2f}")
+    with c2:
+        st.metric("Selar Price", f"RM {sel_row['Selar Price']:.2f}", delta=f"± {s_err:.2f}", delta_color="off")
+        st.caption(f"USD: {sel_row['USD']:.3f} | Diesel: {sel_row['Diesel']:.2f}")
 
     st.divider()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📉 Price Forecast")
+        st.line_chart(df_traj.set_index("Week")[["Kembung Price", "Selar Price"]], color=["#2e86c1", "#27ae60"])
+    with col2:
+        st.subheader("📊 Economic Trajectory")
+        st.line_chart(df_traj.set_index("Week")[["USD", "Diesel", "RON97"]], color=["#e74c3c", "#7f8c8d", "#e67e22"])
 
-    # B. The Deep Dive (Specific Species)
-    if view_species == "Kembung":
-        st.subheader("🐟 Kembung Structural Inputs")
-        st.write(f"Variables used for **{target_week_str}** prediction.")
-        
-        k_df = pd.DataFrame({
-            'Feature': ['RON95 (Frozen)', 'RON97 (Frozen)', 'Diesel (Frozen)', 'Tide Sabah (Proj)', 'Tide Perak (Proj)', 'Sunset (Proj)', 'Moon Phase'],
-            'Value': [
-                f"RM {curr_ron95:.2f}",
-                f"RM {curr_ron97:.2f}",
-                f"RM {curr_diesel:.2f}", 
-                f"{proj_tide_sb:.2f} m", 
-                f"{proj_tide_pk:.2f} m", 
-                f"{int(proj_sunset)} min", 
-                f"{phase_days:.1f}/29.5"
-            ],
-            'Type': ['Economic (Buffer)', 'Economic (Buffer)', 'Economic (Buffer)', 'Physics (Astral)', 'Physics (Astral)', 'Physics (Astral)', 'Context']
-        })
-        st.table(k_df)
-        
-    else:
-        st.subheader("🐠 Selar Structural Inputs")
-        st.write(f"Variables used for **{target_week_str}** prediction.")
-        
-        s_df = pd.DataFrame({
-            'Feature': ['RON95 (Frozen)', 'RON97 (Frozen)', 'Diesel (Frozen)', 'USD Rate (Frozen)', 'Tide Perak (Proj)'],
-            'Value': [
-                f"RM {curr_ron95:.2f}",
-                f"RM {curr_ron97:.2f}",
-                f"RM {curr_diesel:.2f}", 
-                f"{curr_usd:.2f}", 
-                f"{proj_tide_pk:.2f} m"
-            ],
-            'Type': ['Economic (Buffer)', 'Economic (Buffer)', 'Economic (Buffer)', 'Economic (Buffer)', 'Physics (Astral)']
-        })
-        st.table(s_df)
-        
+    with st.expander("View Forensic Data Ledger", expanded=False):
+        numeric_cols = ["Kembung Price", "Selar Price", "USD", "Diesel", "RON97", "Avg Tide"]
+        st.dataframe(df_traj.style.format("{:.4f}", subset=numeric_cols))
